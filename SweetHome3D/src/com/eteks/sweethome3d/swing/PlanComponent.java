@@ -294,6 +294,7 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
   
   private List<HomePieceOfFurniture>        sortedLevelFurniture;
   private List<Room>                        sortedLevelRooms;
+  private Level                             printedLevel;
   private Map<TextStyle, Font>              fonts;
   private Map<TextStyle, FontMetrics>       fontsMetrics;
   
@@ -2002,13 +2003,59 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
     }
     return strokeWidth;
   }
-  
+  private Level getPaintedLevel() {
+    return this.printedLevel != null ? this.printedLevel : this.home.getSelectedLevel();
+  }
+  private void clearLevelPaintCache() {
+    this.backgroundImageCache = null;
+    this.wallAreasCache = null;
+    this.sortedLevelRooms = null;
+    this.sortedLevelFurniture = null;
+  }
+  static Level getPrintedLevel(Home home, int pageIndex) {
+    if (pageIndex < 0) {
+      return null;
+    }
+    for (Level level : home.getLevels()) {
+      if (level.isViewable()) {
+        if (pageIndex == 0) {
+          return level;
+        }
+        pageIndex--;
+      }
+    }
+    return null;
+  }
+  public int print(Graphics g, PageFormat pageFormat, int pageIndex) {
+    if (pageIndex < 0) {
+      return NO_SUCH_PAGE;
+    }
+    if (this.home.getLevels().isEmpty()) {
+      return printPlan(g, pageFormat, pageIndex);
+    }
+    Level level = getPrintedLevel(this.home, pageIndex);
+    if (level == null) {
+      return NO_SUCH_PAGE;
+    }
+    clearLevelPaintCache();
+    this.printedLevel = level;
+    try {
+      return printPlan(g, pageFormat, 0);
+    } finally {
+      this.printedLevel = null;
+      clearLevelPaintCache();
+    }
+  }
   /**
    * Prints this component plan at the scale given in the home print attributes or at a scale 
    * that makes it fill <code>pageFormat</code> imageable size if this attribute is <code>null</code>.
    */
-  public int print(Graphics g, PageFormat pageFormat, int pageIndex) {
-    List<Selectable> printedItems = getPaintedItems(); 
+  private int printPlan(Graphics g, PageFormat pageFormat, int pageIndex) {
+    List<Selectable> printedItems = getPaintedItems();
+    if (this.printedLevel != null) {
+      printedItems.removeIf(item -> item instanceof Elevatable
+              && !isViewableAtSelectedLevel((Elevatable)item));
+    }
     Rectangle2D printedItemBounds = getItemsBounds(g, printedItems);
     if (printedItemBounds != null) {
       double imageableX = pageFormat.getImageableX();
@@ -2020,9 +2067,14 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
       float columnIndex;
       int pagesPerRow;
       int pagesPerColumn;
-      if (this.home.getPrint() == null || this.home.getPrint().getPlanScale() == null) {
-        // Compute a scale that ensures the plan will fill the component if plan scale is null
-        printScale = getPrintPreferredScale(g, pageFormat) * LengthUnit.centimeterToInch(72);
+      Float configuredScale = this.home.getPrint() == null
+              ? null : this.home.getPrint().getPlanScale();
+      if (configuredScale == null || this.printedLevel != null) {
+        float scale = getPrintPreferredScale(g, pageFormat);
+        if (configuredScale != null) {
+          scale = Math.min(scale, configuredScale);
+        }
+        printScale = scale * LengthUnit.centimeterToInch(72);
         if (pageIndex > 0) {
           return NO_SUCH_PAGE;
         }
@@ -2071,7 +2123,7 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
       g2D.dispose();
       return PAGE_EXISTS;
     } else {
-      return NO_SUCH_PAGE;
+      return this.printedLevel != null ? PAGE_EXISTS : NO_SUCH_PAGE;
     }
   }
   
@@ -2199,7 +2251,7 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
    * Paints background image and returns <code>true</code> if an image is painted.
    */
   private boolean paintBackgroundImage(Graphics2D g2D, PaintMode paintMode) {
-    Level selectedLevel = this.home.getSelectedLevel();
+    Level selectedLevel = getPaintedLevel();
     Level backgroundImageLevel = null;
     if (selectedLevel != null) { 
       // Search the first level at same elevation with a background image
@@ -3429,7 +3481,7 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
     Level level = item.getLevel();
     return level == null
         || (level.isViewable()
-            && item.isAtLevel(this.home.getSelectedLevel()));
+            && item.isAtLevel(getPaintedLevel()));
   }
 
   /**
